@@ -42,19 +42,21 @@
 
 /* Private variables ---------------------------------------------------------*/
 UART_HandleTypeDef hlpuart1;
-
 TIM_HandleTypeDef htim2;
+DMA_HandleTypeDef hdma_tim2_up;
 
 /* USER CODE BEGIN PV */
 uint32_t buf_PWM[PWM_RESOLUTION] = {0};
 uint8_t duty_cycles[2] = {25, 50};
 uint8_t pin_numbers[2] = {0, 13};
+uint8_t word[20] = "Hello World \n";
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_LPUART1_UART_Init(void);
 static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
@@ -118,13 +120,19 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_LPUART1_UART_Init();
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
   generate_pwm_buffer(buf_PWM, duty_cycles, PWM_RESOLUTION, pin_numbers);
-  init_DMA_TIM2();
-  TIM2->CR1 |= 1 << 0;
-  DMA1_Channel2->CCR |= 1 << 0;
+  //init_DMA_TIM2();
+  //DMA1_Channel2->CCR |= 1 << 0;
+  //TIM2->CR1 |= 1 << 0;
+
+  HAL_DMA_Start(&hdma_tim2_up, (uint32_t) buf_PWM, (uint32_t)&GPIOC->BSRR, 100);
+  HAL_TIM_Base_Start_DMA(&htim2, (uint32_t*) buf_PWM, 100);
+
+
 
 
 
@@ -138,6 +146,7 @@ int main(void)
   while (1)
   {
 	 HAL_Delay(500);
+	 HAL_UART_Transmit(&hlpuart1, word, 20, 1000);
 	 GPIOB->ODR ^= 1 << 1;
     /* USER CODE END WHILE */
 
@@ -209,7 +218,7 @@ static void MX_LPUART1_UART_Init(void)
 
   /* USER CODE END LPUART1_Init 1 */
   hlpuart1.Instance = LPUART1;
-  hlpuart1.Init.BaudRate = 209700;
+  hlpuart1.Init.BaudRate = 115200;
   hlpuart1.Init.WordLength = UART_WORDLENGTH_7B;
   hlpuart1.Init.StopBits = UART_STOPBITS_1;
   hlpuart1.Init.Parity = UART_PARITY_NONE;
@@ -273,6 +282,22 @@ static void MX_TIM2_Init(void)
 }
 
 /**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel2_3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel2_3_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel2_3_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -280,8 +305,8 @@ static void MX_TIM2_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
-/* USER CODE BEGIN MX_GPIO_Init_1 */
-/* USER CODE END MX_GPIO_Init_1 */
+  /* USER CODE BEGIN MX_GPIO_Init_1 */
+  /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
@@ -344,8 +369,8 @@ static void MX_GPIO_Init(void)
   HAL_NVIC_SetPriority(EXTI4_15_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI4_15_IRQn);
 
-/* USER CODE BEGIN MX_GPIO_Init_2 */
-/* USER CODE END MX_GPIO_Init_2 */
+  /* USER CODE BEGIN MX_GPIO_Init_2 */
+  /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
