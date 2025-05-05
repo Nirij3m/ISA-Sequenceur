@@ -42,30 +42,29 @@
 
 /* Private variables ---------------------------------------------------------*/
 UART_HandleTypeDef hlpuart1;
+
 TIM_HandleTypeDef htim2;
-DMA_HandleTypeDef hdma_tim2_up;
 
 /* USER CODE BEGIN PV */
 uint32_t buf_PWM[PWM_RESOLUTION] = {0};
 uint8_t duty_cycles[2] = {25, 50};
 uint8_t pin_numbers[2] = {0, 13};
-uint8_t word[20] = "Hello World \n";
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_DMA_Init(void);
 static void MX_LPUART1_UART_Init(void);
 static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
-void generate_pwm_buffer(uint32_t *buffer, uint8_t duty_cycles[], uint8_t num_steps, uint8_t pin_numbers[]);
-void init_DMA_TIM2();
+//void generate_pwm_buffer(uint32_t *buffer, uint8_t duty_cycles[], uint8_t num_steps, uint8_t pin_numbers[]);
+//void init_DMA_TIM2();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/*
 void generate_pwm_buffer(uint32_t *buffer, uint8_t duty_cycles[], uint8_t num_steps, uint8_t pin_numbers[]) {
     for (int i = 0; i < num_steps; i++) {
 
@@ -78,16 +77,39 @@ void generate_pwm_buffer(uint32_t *buffer, uint8_t duty_cycles[], uint8_t num_st
         }
     }
 }
-
+ DMA not working toward GPIOs !
 void init_DMA_TIM2(){
 	TIM2->DIER |= 1 << 8; //Enable DMA request on update event -> (overflow)
+	TIM2->DIER |= 1 << 14; //Enable trigger DMA request
 	RCC->AHBENR |= 1 << 0;
 	DMA1_CSELR->CSELR |= 1 << 7; //Select TIM2_UP DMA CHannel
-	DMA1_Channel2->CPAR = (uint32_t) &GPIOC->BSRR; //Adresse of data destination
+	DMA1_Channel2->CPAR = (uint16_t) &TIM2->ARR; //Adresse of data destination
 	DMA1_Channel2->CMAR =  (uint32_t) buf_PWM;
 	DMA1_Channel2->CNDTR = (uint32_t) 0x64; //Counter, 100 datas to read
 	DMA1_Channel2->CCR |= (1 << 11) | (1 << 9) | (1 << 7) | (1 << 5 ) | (1 << 4);
 }
+*/
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim){
+	//Reset all GPIOs
+	GPIOC->BSRR = (1 << 16) | (1 << 29);
+	GPIOB->BSRR = 1 << 25;
+}
+
+void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef* htim){
+	switch(htim->Channel){
+		case 1: //PWM EXP1
+			GPIOC->BSRR = 1 << 0;
+			break;
+		case 2: //PWM EXP2
+			GPIOC->BSRR = 1 << 13;
+			break;
+		case 3: //PWM PARA
+
+			break;
+	}
+}
+
 
 /* USER CODE END 0 */
 
@@ -120,7 +142,6 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_DMA_Init();
   MX_LPUART1_UART_Init();
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
@@ -129,25 +150,15 @@ int main(void)
   //DMA1_Channel2->CCR |= 1 << 0;
   //TIM2->CR1 |= 1 << 0;
 
-  HAL_DMA_Start(&hdma_tim2_up, (uint32_t) buf_PWM, (uint32_t)&GPIOC->BSRR, 100);
-  HAL_TIM_Base_Start_DMA(&htim2, (uint32_t*) buf_PWM, 100);
-
-
-
-
-
-
-
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	 HAL_Delay(500);
-	 HAL_UART_Transmit(&hlpuart1, word, 20, 1000);
-	 GPIOB->ODR ^= 1 << 1;
+	  GPIOB->ODR ^= 1 << 1;
+	  HAL_Delay(500);
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -250,14 +261,15 @@ static void MX_TIM2_Init(void)
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
 
   /* USER CODE BEGIN TIM2_Init 1 */
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 0;
+  htim2.Init.Prescaler = 7;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 3199;
+  htim2.Init.Period = 39999;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -269,31 +281,36 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
+  if (HAL_TIM_OC_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
   {
     Error_Handler();
   }
+  sConfigOC.OCMode = TIM_OCMODE_TIMING;
+  sConfigOC.Pulse = 19999;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_OC_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.Pulse = 0;
+  if (HAL_TIM_OC_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_OC_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE BEGIN TIM2_Init 2 */
 
   /* USER CODE END TIM2_Init 2 */
-
-}
-
-/**
-  * Enable DMA controller clock
-  */
-static void MX_DMA_Init(void)
-{
-
-  /* DMA controller clock enable */
-  __HAL_RCC_DMA1_CLK_ENABLE();
-
-  /* DMA interrupt init */
-  /* DMA1_Channel2_3_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel2_3_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Channel2_3_IRQn);
 
 }
 
