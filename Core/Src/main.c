@@ -91,21 +91,22 @@ void init_DMA_TIM2(){
 */
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim){
-	//Reset all GPIOs
-	GPIOC->BSRR = (1 << 16) | (1 << 29);
-	GPIOB->BSRR = 1 << 25;
+	GPIOC->BSRR = (1 << 0) | (1 << 13);
+	GPIOB->BSRR = 1 << 9;
 }
 
 void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef* htim){
 	switch(htim->Channel){
-		case 1: //PWM EXP1
-			GPIOC->BSRR = 1 << 0;
+		case HAL_TIM_ACTIVE_CHANNEL_1 : //PWM EXP1
+			GPIOC->BSRR = 1 << 16;
 			break;
-		case 2: //PWM EXP2
-			GPIOC->BSRR = 1 << 13;
+		case HAL_TIM_ACTIVE_CHANNEL_2 : //PWM EXP2
+			GPIOC->BSRR = 1 << 29;
 			break;
-		case 3: //PWM PARA
-
+		case HAL_TIM_ACTIVE_CHANNEL_3: //PWM PARA
+			GPIOB->BSRR = 1 << 25;
+			break;
+		default:
 			break;
 	}
 }
@@ -145,7 +146,11 @@ int main(void)
   MX_LPUART1_UART_Init();
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
-  generate_pwm_buffer(buf_PWM, duty_cycles, PWM_RESOLUTION, pin_numbers);
+  HAL_TIM_Base_Start_IT(&htim2);
+  HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1);
+  HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_2);
+  HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_3);
+  //generate_pwm_buffer(buf_PWM, duty_cycles, PWM_RESOLUTION, pin_numbers);
   //init_DMA_TIM2();
   //DMA1_Channel2->CCR |= 1 << 0;
   //TIM2->CR1 |= 1 << 0;
@@ -292,18 +297,19 @@ static void MX_TIM2_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_TIMING;
-  sConfigOC.Pulse = 19999;
+  sConfigOC.Pulse = 5000;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   if (HAL_TIM_OC_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
   {
     Error_Handler();
   }
-  sConfigOC.Pulse = 0;
+  sConfigOC.Pulse = 4500;
   if (HAL_TIM_OC_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
+  sConfigOC.Pulse = 4000;
   if (HAL_TIM_OC_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
   {
     Error_Handler();
