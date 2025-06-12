@@ -26,6 +26,13 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef enum  {
+	WAITING,
+	FIRST_PHASE,
+	SECOND_PHASE,
+	THIRD_PHASE
+}State;
+
 
 /* USER CODE END PTD */
 
@@ -40,17 +47,18 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-LPTIM_HandleTypeDef hlptim1;
-
 UART_HandleTypeDef hlpuart1;
 
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim21;
 
 /* USER CODE BEGIN PV */
 uint8_t state_PARA = 1;
 uint8_t state_EXP = 1;
 uint8_t rocket_launched = 0;
-uint8_t counter = 0;
+
+State systemstate = WAITING;
+State recall = WAITING;
 
 
 
@@ -61,7 +69,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_LPUART1_UART_Init(void);
 static void MX_TIM2_Init(void);
-static void MX_LPTIM1_Init(void);
+static void MX_TIM21_Init(void);
 /* USER CODE BEGIN PFP */
 
 
@@ -73,8 +81,23 @@ static void MX_LPTIM1_Init(void);
 
 //reset the GPIO's pin for PWM
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim){
-	GPIOC->BSRR = (1 << 0) | (1 << 13);
-	GPIOB->BSRR = 1 << 9;
+	if(htim->Instance == TIM2){
+		GPIOC->BSRR = (1 << 0) | (1 << 13);
+		GPIOB->BSRR = 1 << 9;
+	}
+	else if(htim->Instance == TIM21){
+		switch(recall){
+			case FIRST_PHASE: //first phase has ellapsed, throw in the parachute !
+				systemstate = SECOND_PHASE;
+				break;
+			case SECOND_PHASE:
+				systemstate = THIRD_PHASE;
+				break;
+			default:
+				break;
+		}
+	}
+
 }
 
 void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef* htim){
@@ -97,9 +120,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
 	if(!rocket_launched){
 		switch(GPIO_Pin){
 			case 4: //PB2 LAUNCH SIG, ROCKET LAUNCHED GLHF !!
-				rocket_launched = 1;
-				GPIOA->ODR |= 1 << 3; //EXP_START SIG
-				counter++;
+				systemstate = FIRST_PHASE;
 				break;
 			case 8: //PB3 RELOAD PARA
 				if(state_PARA){
@@ -160,9 +181,11 @@ int main(void)
   MX_GPIO_Init();
   MX_LPUART1_UART_Init();
   MX_TIM2_Init();
-  MX_LPTIM1_Init();
+  MX_TIM21_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_Base_Start_IT(&htim2);
+  HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_3); //LOCK THE SERVO ON POWER UP
+
 
 
   /* USER CODE END 2 */
@@ -173,6 +196,39 @@ int main(void)
   {
 	  GPIOB->ODR = 0b11;
 	  HAL_Delay(2000);
+
+	  switch(systemstate){
+	  	  case WAITING:
+			  break;
+
+	  	  case FIRST_PHASE:
+			rocket_launched = 1;
+			GPIOA->ODR |= 1 << 3; //EXP_START SIG
+			HAL_TIM_Base_Start_IT(&htim21); //start countdown until apoapsis 13.5sec
+			recall = FIRST_PHASE;
+			systemstate = WAITING;
+			break;
+
+		  case SECOND_PHASE:
+			TIM2->CCR3 = 3000; //SERVO WILL UNLOCK !
+
+			HAL_TIM_Base_Stop_IT(&htim21);
+			TIM21->ARR = 65601;
+			TIM21->PSC = 29311;
+			TIM21->CNT = 0;
+			HAL_TIM_Base_Start_IT(&htim21);//start countdown until landing 120sec
+
+
+			HAL_Delay(3000);
+			//TODO THrow in the exp servos
+			recall = SECOND_PHASE;
+			systemstate = WAITING;
+			break;
+
+		  case THIRD_PHASE:
+			  //TODO Beep beep
+			  break;
+	  }
 
     /* USER CODE END WHILE */
 
@@ -220,46 +276,12 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_LPUART1|RCC_PERIPHCLK_LPTIM1;
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_LPUART1;
   PeriphClkInit.Lpuart1ClockSelection = RCC_LPUART1CLKSOURCE_PCLK1;
-  PeriphClkInit.LptimClockSelection = RCC_LPTIM1CLKSOURCE_PCLK;
-
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
   }
-}
-
-/**
-  * @brief LPTIM1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_LPTIM1_Init(void)
-{
-
-  /* USER CODE BEGIN LPTIM1_Init 0 */
-
-  /* USER CODE END LPTIM1_Init 0 */
-
-  /* USER CODE BEGIN LPTIM1_Init 1 */
-
-  /* USER CODE END LPTIM1_Init 1 */
-  hlptim1.Instance = LPTIM1;
-  hlptim1.Init.Clock.Source = LPTIM_CLOCKSOURCE_APBCLOCK_LPOSC;
-  hlptim1.Init.Clock.Prescaler = LPTIM_PRESCALER_DIV1;
-  hlptim1.Init.Trigger.Source = LPTIM_TRIGSOURCE_SOFTWARE;
-  hlptim1.Init.OutputPolarity = LPTIM_OUTPUTPOLARITY_HIGH;
-  hlptim1.Init.UpdateMode = LPTIM_UPDATE_IMMEDIATE;
-  hlptim1.Init.CounterSource = LPTIM_COUNTERSOURCE_INTERNAL;
-  if (HAL_LPTIM_Init(&hlptim1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN LPTIM1_Init 2 */
-
-  /* USER CODE END LPTIM1_Init 2 */
-
 }
 
 /**
@@ -361,6 +383,51 @@ static void MX_TIM2_Init(void)
   /* USER CODE BEGIN TIM2_Init 2 */
 
   /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
+  * @brief TIM21 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM21_Init(void)
+{
+
+  /* USER CODE BEGIN TIM21_Init 0 */
+
+  /* USER CODE END TIM21_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM21_Init 1 */
+
+  /* USER CODE END TIM21_Init 1 */
+  htim21.Instance = TIM21;
+  htim21.Init.Prescaler = 3295;
+  htim21.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim21.Init.Period = 65532;
+  htim21.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim21.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim21) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim21, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim21, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM21_Init 2 */
+
+  /* USER CODE END TIM21_Init 2 */
 
 }
 
