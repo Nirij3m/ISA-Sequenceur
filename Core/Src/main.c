@@ -31,7 +31,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define PWM_RESOLUTION 100
 
 /* USER CODE END PD */
 
@@ -41,14 +40,19 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+LPTIM_HandleTypeDef hlptim1;
+
 UART_HandleTypeDef hlpuart1;
 
 TIM_HandleTypeDef htim2;
 
 /* USER CODE BEGIN PV */
-uint32_t buf_PWM[PWM_RESOLUTION] = {0};
-uint8_t duty_cycles[2] = {25, 50};
-uint8_t pin_numbers[2] = {0, 13};
+uint8_t state_PARA = 1;
+uint8_t state_EXP = 1;
+uint8_t rocket_launched = 0;
+uint8_t counter = 0;
+
+
 
 /* USER CODE END PV */
 
@@ -57,39 +61,17 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_LPUART1_UART_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_LPTIM1_Init(void);
 /* USER CODE BEGIN PFP */
-//void generate_pwm_buffer(uint32_t *buffer, uint8_t duty_cycles[], uint8_t num_steps, uint8_t pin_numbers[]);
-//void init_DMA_TIM2();
+
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-/*
-void generate_pwm_buffer(uint32_t *buffer, uint8_t duty_cycles[], uint8_t num_steps, uint8_t pin_numbers[]) {
-    for (int i = 0; i < num_steps; i++) {
 
-        for (int j = 0; j < 3;  j++){ //concatenate each PWM value
-			if (i < duty_cycles[j] * num_steps / 100) {
-				buffer[i] |= 1 << pin_numbers[j];
-			} else {
-				buffer[i] |= 1 << (pin_numbers[j] + 16);
-			}
-        }
-    }
-}
- DMA not working toward GPIOs !
-void init_DMA_TIM2(){
-	TIM2->DIER |= 1 << 8; //Enable DMA request on update event -> (overflow)
-	TIM2->DIER |= 1 << 14; //Enable trigger DMA request
-	RCC->AHBENR |= 1 << 0;
-	DMA1_CSELR->CSELR |= 1 << 7; //Select TIM2_UP DMA CHannel
-	DMA1_Channel2->CPAR = (uint16_t) &TIM2->ARR; //Adresse of data destination
-	DMA1_Channel2->CMAR =  (uint32_t) buf_PWM;
-	DMA1_Channel2->CNDTR = (uint32_t) 0x64; //Counter, 100 datas to read
-	DMA1_Channel2->CCR |= (1 << 11) | (1 << 9) | (1 << 7) | (1 << 5 ) | (1 << 4);
-}
-*/
 
+//reset the GPIO's pin for PWM
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim){
 	GPIOC->BSRR = (1 << 0) | (1 << 13);
 	GPIOB->BSRR = 1 << 9;
@@ -108,6 +90,39 @@ void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef* htim){
 			break;
 		default:
 			break;
+	}
+}
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
+
+	if(!rocket_launched){
+		switch(GPIO_Pin){
+			case 4: //PB2 LAUNCH SIG, ROCKET LAUNCHED GLHF !!
+				rocket_launched = 1;
+				GPIOA->ODR |= 1 << 3; //EXP_START SIG
+				counter++;
+				break;
+			case 8: //PB3 RELOAD PARA
+				if(state_PARA){
+					HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_3);
+					TIM2->CCR3 = 5000;
+				}
+				else{ //CAREFULL, WILL EJECT THE HATCH !!
+					TIM2->CCR3 = 3000;
+				}
+				state_PARA ^= 1;
+				break;
+			case 32768: //PA15 RELOAD EXP
+				if(state_EXP){
+					HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1);
+					HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_2);
+				}
+				else{
+					HAL_TIM_OC_Stop_IT(&htim2, TIM_CHANNEL_1);
+					HAL_TIM_OC_Stop_IT(&htim2, TIM_CHANNEL_2);
+				}
+				state_EXP ^= 1;
+				break;
+		}
 	}
 }
 
@@ -145,15 +160,10 @@ int main(void)
   MX_GPIO_Init();
   MX_LPUART1_UART_Init();
   MX_TIM2_Init();
+  MX_LPTIM1_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_Base_Start_IT(&htim2);
-  HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1);
-  HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_2);
-  HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_3);
-  //generate_pwm_buffer(buf_PWM, duty_cycles, PWM_RESOLUTION, pin_numbers);
-  //init_DMA_TIM2();
-  //DMA1_Channel2->CCR |= 1 << 0;
-  //TIM2->CR1 |= 1 << 0;
+
 
   /* USER CODE END 2 */
 
@@ -161,8 +171,8 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  GPIOB->ODR ^= 1 << 1;
-	  HAL_Delay(500);
+	  GPIOB->ODR = 0b11;
+	  HAL_Delay(2000);
 
     /* USER CODE END WHILE */
 
@@ -210,12 +220,46 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_LPUART1;
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_LPUART1|RCC_PERIPHCLK_LPTIM1;
   PeriphClkInit.Lpuart1ClockSelection = RCC_LPUART1CLKSOURCE_PCLK1;
+  PeriphClkInit.LptimClockSelection = RCC_LPTIM1CLKSOURCE_PCLK;
+
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief LPTIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_LPTIM1_Init(void)
+{
+
+  /* USER CODE BEGIN LPTIM1_Init 0 */
+
+  /* USER CODE END LPTIM1_Init 0 */
+
+  /* USER CODE BEGIN LPTIM1_Init 1 */
+
+  /* USER CODE END LPTIM1_Init 1 */
+  hlptim1.Instance = LPTIM1;
+  hlptim1.Init.Clock.Source = LPTIM_CLOCKSOURCE_APBCLOCK_LPOSC;
+  hlptim1.Init.Clock.Prescaler = LPTIM_PRESCALER_DIV1;
+  hlptim1.Init.Trigger.Source = LPTIM_TRIGSOURCE_SOFTWARE;
+  hlptim1.Init.OutputPolarity = LPTIM_OUTPUTPOLARITY_HIGH;
+  hlptim1.Init.UpdateMode = LPTIM_UPDATE_IMMEDIATE;
+  hlptim1.Init.CounterSource = LPTIM_COUNTERSOURCE_INTERNAL;
+  if (HAL_LPTIM_Init(&hlptim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN LPTIM1_Init 2 */
+
+  /* USER CODE END LPTIM1_Init 2 */
+
 }
 
 /**
@@ -297,19 +341,19 @@ static void MX_TIM2_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_TIMING;
-  sConfigOC.Pulse = 5000;
+  sConfigOC.Pulse = 2500;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   if (HAL_TIM_OC_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
   {
     Error_Handler();
   }
-  sConfigOC.Pulse = 4500;
+  sConfigOC.Pulse = 3800;
   if (HAL_TIM_OC_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
-  sConfigOC.Pulse = 4000;
+  sConfigOC.Pulse = 5000;
   if (HAL_TIM_OC_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
   {
     Error_Handler();
